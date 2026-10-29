@@ -178,6 +178,13 @@ body.testing .card .num::after{content:" · TEST";color:#ffd34d}
 @keyframes goldshine{to{background-position:200% 0}}
 @media (prefers-reduced-motion: reduce){.creator{animation:none}}
 
+/* the kraken: the whole page goes dark and shakes */
+body.kraken::after{content:"";position:fixed;inset:0;z-index:40;pointer-events:none;background:radial-gradient(circle at 50% 40%, rgba(0,0,0,.55), rgba(0,0,0,.92));animation:krakenfade .8s ease-out both}
+body.kraken:not(.fs) .cabinet{position:relative;z-index:41;animation:quake .35s infinite}
+body.kraken.fs .cabinet{z-index:45}
+@keyframes krakenfade{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion: reduce){ body.kraken:not(.fs) .cabinet{animation:none} }
+
 /* leaderboard + records */
 .lbgrid{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}
 @media (max-width:820px){.lbgrid{grid-template-columns:minmax(0,1fr)}}
@@ -999,7 +1006,9 @@ function setTest(on){
 { let taps = [];
   $("brandTitle").addEventListener("click", () => { const now = Date.now(); taps = taps.filter(t => now - t < 2500); taps.push(now); if (taps.length >= 7){ taps = []; setTest(!TEST.on); } });
   let typed = "";
-  document.addEventListener("keydown", e => { if (e.key.length !== 1 || /INPUT|TEXTAREA/.test(e.target.tagName)) return; typed = (typed + e.key.toLowerCase()).slice(-8); if (typed === "testswim"){ typed = ""; setTest(!TEST.on); } });
+  document.addEventListener("keydown", e => { if (e.key.length !== 1 || /INPUT|TEXTAREA/.test(e.target.tagName)) return; typed = (typed + e.key.toLowerCase()).slice(-8);
+    if (typed.endsWith("testswim")){ typed = ""; setTest(!TEST.on); }
+    else if (TEST.on && typed.endsWith("kraken")){ typed = ""; TEST.kraken = true; if (game.state === "running") game.monsterAt = game.dist + 20; toast("The kraken stirs… start swimming"); } });
 }
 function selectChar(id){
   if (TEST.on){ TEST.car = id; renderHUD(); renderCards(); renderNow(); toast("Test swimming as the " + CHARS[id].name); return; }
@@ -1105,10 +1114,22 @@ const Sound = (() => {
   }
   const ok = () => ac && prefs.sfx;
   const fx = {
-    jump(){ if (!ok()) return; tone(220, .16, {type:"square", vol:.18, slide:520, cutoff:2400}); },
-    coin(){ if (!ok()) return; tone(988, .07, {type:"square", vol:.12}); tone(1319, .16, {type:"square", vol:.12, at:.06}); },
+    // bubbly "bloop" when the fish swims up
+    jump(){ if (!ok()) return; tone(260, .14, {type:"sine", vol:.32, slide:780}); tone(520, .08, {type:"sine", vol:.12, at:.07, slide:1100}); [.12,.17,.21].forEach((d,i) => tone(900 + i*260, .05, {type:"sine", vol:.08, at:d, slide:1400 + i*300})); },
+    // watery plink with a fizz of bubbles for coins
+    coin(){ if (!ok()) return; tone(1500, .1, {type:"sine", vol:.18, slide:1900}); tone(2250, .18, {type:"sine", vol:.1, at:.05}); for (let i = 0; i < 4; i++) tone(1200 + Math.random()*1400, .04, {type:"sine", vol:.05, at:.08 + i*.035, slide:2600}); },
     round(){ if (!ok()) return; [523, 659, 784, 1047].forEach((f, i) => tone(f, .18, {type:"square", vol:.14, at:i*.08, cutoff:3000})); },
-    crash(){ if (!ok()) return; noise(.5, {vol:.5, lp:1400}); tone(140, .45, {type:"sawtooth", vol:.3, slide:40, cutoff:900}); tone(70, .3, {type:"sine", vol:.4, slide:35}); },
+    // muffled underwater splash-thud
+    crash(){ if (!ok()) return; noise(.6, {vol:.45, lp:700}); tone(110, .4, {type:"sine", vol:.5, slide:40}); for (let i = 0; i < 6; i++) tone(500 + Math.random()*900, .06, {type:"sine", vol:.06, at:.05 + i*.05, slide:1600}); },
+    // the kraken: rumble, eye opening, tentacle swooshes, then the CHOMP
+    monster(){ if (!ok()) return;
+      noise(3.4, {vol:.35, lp:180}); tone(48, 3.2, {type:"sawtooth", vol:.18, cutoff:220, attack:.8}); tone(51, 3.2, {type:"sawtooth", vol:.14, cutoff:220, attack:.8});
+      tone(90, 1, {type:"sine", vol:.3, at:.6, slide:60});
+      [1.3,1.8,2.2].forEach(d => { const t0 = ac.currentTime + d, s2 = ac.createBufferSource(); s2.buffer = noiseBuf; const f = ac.createBiquadFilter(); f.type = "bandpass"; f.Q.value = 2;
+        f.frequency.setValueAtTime(300, t0); f.frequency.exponentialRampToValueAtTime(1800, t0 + .4); const g = ac.createGain(); g.gain.setValueAtTime(.001, t0); g.gain.linearRampToValueAtTime(.3, t0 + .15); g.gain.exponentialRampToValueAtTime(.001, t0 + .45);
+        s2.connect(f); f.connect(g); g.connect(sfxBus); s2.start(t0); s2.stop(t0 + .5); });
+      noise(.9, {vol:.7, at:3.15, lp:900}); tone(70, 1.2, {type:"sawtooth", vol:.35, at:3.1, slide:30, cutoff:600}); tone(40, 1.4, {type:"sine", vol:.7, at:3.15, slide:25});
+    },
     // chest suspense: rattles speed up; rarer pulls add a riser, a heartbeat and a drumroll
     shake(dur, tier){ if (!ok()) return;
       let t = 0, gap = .16; while (t < dur - .05){ noise(.05, {vol:.2 + tier*.02, at:t, hp:1800}); tone(170 + Math.random()*40, .05, {type:"square", vol:.05, at:t + .02, cutoff:800}); t += gap; gap = Math.max(.05, gap * (tier >= 3 ? .9 : .97)); }
@@ -1161,17 +1182,39 @@ document.addEventListener("click", e => {
 /* ============================== TREASURE CHEST ============================== */
 let chestBusy = false, lastPull = null;
 const chestCtx = setupCanvas($("chestCv"));
+// a pirate's treasure chest: dark planks, iron bands, rivets, a skull and crossbones, and treasure inside
 function drawChest(open, t, ctx = chestCtx){
   ctx.clearRect(0,0,300,300);
-  ctx.save(); ctx.translate(150,170); ctx.scale(6,6);
+  ctx.save(); ctx.translate(150,172); ctx.scale(6,6);
   const P=(x,y,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(x,y,w,h)};
-  P(-11,8,22,2,"rgba(0,0,0,.35)");
-  P(-10,-2,20,10,"#8a4f22"); P(-10,-2,20,1,"#a8662e"); P(-10,7,20,1,"#5e3314");
-  P(-10,-2,2,10,"#e9c07a"); P(8,-2,2,10,"#e9c07a"); P(-2,-1,4,4,"#e9c07a"); P(-1,0,2,2,"#5e3314");
-  if (!open){ P(-10,-8,20,6,"#9a5a26"); P(-9,-9,18,1,"#9a5a26"); P(-10,-8,20,1,"#b8743a"); P(-10,-8,2,6,"#e9c07a"); P(8,-8,2,6,"#e9c07a"); P(-2,-4,4,2,"#e9c07a"); }
-  else { P(-10,-14,20,4,"#9a5a26"); P(-10,-14,2,4,"#e9c07a"); P(8,-14,2,4,"#e9c07a"); P(-9,-4,18,2,"#ffe08a"); P(-6,-6,12,2,"rgba(255,224,138,.6)"); }
+  const WOOD = "#5a3418", WOOD2 = "#6e4220", SEAM = "#3a2010", IRON = "#3e3e48", IRON2 = "#6a6a78", RIV = "#c8c8d4", GOLD = "#ffd34d";
+  P(-12,8,24,2,"rgba(0,0,0,.4)");
+  // base box with planks
+  P(-11,-2,22,10,WOOD); for (let i = 0; i < 3; i++) P(-11, i*3, 22, 1, SEAM); P(-11,-2,22,1,WOOD2);
+  P(-11,-2,2,10,IRON); P(9,-2,2,10,IRON); P(-2,-2,4,10,IRON); P(-11,7,22,1,IRON);
+  [-10,10].forEach(x => [-1,3,6].forEach(y => P(x - (x > 0 ? 1 : 0), y, 1, 1, RIV)));
+  if (!open){
+    // domed lid
+    P(-11,-8,22,6,WOOD); P(-10,-10,20,2,WOOD); P(-8,-11,16,1,WOOD); P(-11,-8,22,1,WOOD2); P(-10,-10,20,1,WOOD2);
+    P(-11,-8,2,6,IRON); P(9,-8,2,6,IRON); P(-10,-10,2,2,IRON); P(8,-10,2,2,IRON); P(-2,-11,4,9,IRON); P(-11,-3,22,1,IRON);
+    [-10,9].forEach(x => P(x,-7,1,1,RIV));
+    // skull and crossbones on the lid
+    P(-7,-9,1,1,"#f4f0e6"); P(-3,-5,1,1,"#f4f0e6"); P(-3,-9,1,1,"#f4f0e6"); P(-7,-5,1,1,"#f4f0e6"); P(-6,-8,1,1,"#f4f0e6"); P(-4,-6,1,1,"#f4f0e6"); P(-4,-8,1,1,"#f4f0e6"); P(-6,-6,1,1,"#f4f0e6");
+    P(-6,-8,3,2,"#f4f0e6"); P(-6,-6,3,1,"#f4f0e6"); P(-6,-8,1,1,"#1a1010"); P(-4,-8,1,1,"#1a1010");
+    // gold lock with keyhole
+    P(-2,-4,4,4,GOLD); P(-2,-4,4,1,"#fff3b0"); P(-1,-3,2,1,"#3a2010"); P(-1,-2,1,1,"#3a2010");
+  } else {
+    // lid thrown back
+    P(-11,-16,22,5,WOOD); P(-11,-16,22,1,WOOD2); P(-11,-16,2,5,IRON); P(9,-16,2,5,IRON); P(-2,-16,4,5,IRON);
+    // treasure spilling over
+    P(-10,-5,20,4,"#e8a820"); P(-9,-7,18,2,GOLD); P(-7,-8,14,1,GOLD); P(-4,-9,8,1,GOLD);
+    [[-8,-6],[-4,-8],[1,-7],[5,-6],[7,-5],[-6,-4],[3,-4]].forEach(([x,y]) => P(x,y,1,1,"#fff3b0"));
+    P(-6,-7,2,2,"#e0263a"); P(3,-8,2,2,"#2fd06a"); P(6,-6,2,2,"#3a8aff"); P(-2,-9,1,1,"#ffffff"); P(-1,-9,1,1,"#ffffff"); P(0,-9,1,1,"#ffffff");
+    P(-12,1,2,1,GOLD); P(11,3,2,1,GOLD); P(10,5,1,1,GOLD);
+    P(-9,-6,18,1,"rgba(255,240,160,.5)");
+  }
   ctx.restore();
-  if (!open){ ctx.fillStyle = "rgba(255,224,138,"+(.25+.2*Math.sin(t*3))+")"; [[80,70],[226,92],[200,52]].forEach(([x,y],i)=>{const s=4+2*Math.sin(t*4+i);ctx.fillRect(x-s/2,y-s/2,s,s)}); }
+  if (!open){ ctx.fillStyle = "rgba(255,224,138,"+(.25+.2*Math.sin(t*3))+")"; [[74,76],[228,98],[204,56]].forEach(([x,y],i)=>{const s=4+2*Math.sin(t*4+i);ctx.fillRect(x-s/2,y-s/2,s,s)}); }
 }
 function rollChar(){
   let r = Math.random() * 100, tier = 0;
@@ -1325,10 +1368,13 @@ const game = {
 };
 const stars = Array.from({length:70},()=>({x:Math.random()*1000, y:Math.random()*140, s:Math.random()<.2?2:1, p:Math.random()*6}));
 function resetRun(){
-  Object.assign(game, {t:0, speed:320, dist:0, round:1, roundDist:0, runCoins:0, py:0, vy:0, onGround:true, obs:[], coins:[], parts:[], smoke:[], nextObs:420, nextCoin:260, banner:{text:"Round 1", sub: themeFor(curCar()) ? themeFor(curCar()).world : (TEST.on ? "Test swim" : "Go!"), t:1.8}, flash:0, paused:false});
+  Object.assign(game, {t:0, speed:320, dist:0, round:1, roundDist:0, runCoins:0, py:0, vy:0, onGround:true, obs:[], coins:[], parts:[], smoke:[], nextObs:420, nextCoin:260, banner:{text:"Round 1", sub: themeFor(curCar()) ? themeFor(curCar()).world : (TEST.on ? "Test swim" : "Go!"), t:1.8}, flash:0, paused:false, monsterEnd:false, mt:0});
 }
+// The kraken shows up in about 1 of every 100 runs, somewhere between 120 m and 900 m.
+const KRAKEN_CHANCE = 0.01;
 function startRun(){
-  resetRun(); game.state = "running"; $("overCta").hidden = true; Sound.musicStart(curCar());
+  resetRun(); game.state = "running";
+  game.monsterAt = (!TEST.on && Math.random() < KRAKEN_CHANCE) ? 120 + Math.random()*780 : (TEST.kraken ? 40 : Infinity); TEST.kraken = false; $("overCta").hidden = true; Sound.musicStart(curCar());
   // Bring the whole game screen and buttons into view when a run starts
   if (!document.body.classList.contains("fs")) { const r = document.querySelector(".cabinet").getBoundingClientRect(); if (r.top < 0 || r.bottom > window.innerHeight) document.querySelector(".cabinet").scrollIntoView({behavior:"smooth", block: r.height > window.innerHeight ? "start" : "center"}); }
 }
@@ -1350,6 +1396,7 @@ function endRun(){
   }
 }
 function jumpPress(){
+  if (game.state === "monster") return;
   enterFS();
   if (game.state !== "running"){ if (game.state==="over" && game.t - game.overT < .6) return; startRun(); return; }
   if (game.paused){ game.paused = false; Sound.duck(false); return; }
@@ -1406,6 +1453,14 @@ function update(dt){
   if (game.banner){ game.banner.t -= dt; if (game.banner.t <= 0) game.banner = null; }
   if (game.flash > 0) game.flash -= dt;
   const c = curCar();
+  if (game.state === "monster"){
+    game.mt += dt; updateSmoke(dt);
+    if (game.mt >= 3.6){ document.body.classList.remove("kraken"); game.monsterEnd = true; endRun(); }
+    return;
+  }
+  if (game.state === "running" && !game.paused && game.dist >= game.monsterAt){
+    game.state = "monster"; game.mt = 0; game.jumpHeld = false; Sound.monster(); document.body.classList.add("kraken"); return;
+  }
   if (game.state !== "running" || game.paused){ game.parts.forEach(p=>{p.life-=dt}); game.parts = game.parts.filter(p=>p.life>0); if (!game.paused && game.state === "ready") emitSmoke(c, dt, false); updateSmoke(dt); return; }
   // speed & distance
   game.speed = 320 + (game.round-1)*40 + Math.min(90, game.roundDist*0.15);
@@ -1637,39 +1692,84 @@ function drawBG(){
   if (th) WORLD_DRAW[th.world](game.dist*10); else drawReefBG();
 }
 
-/* ---- sea obstacles ---- */
+/* ---- sea obstacles: bright colors, dark outline and a soft glow so they stand out against the water ---- */
 function drawObs(o){
   const P=(x,y,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(Math.floor(x),Math.floor(y),w,h)};
   const x = Math.floor(o.x), y = Math.floor(o.y);
+  const glow = {cone:"#ff5a7a", barrel:"#ff4fa3", tires:"#cfe0ff", barrier:"#c890ff", tire:"#d070ff", bar:"#ffe6a0"}[o.type];
+  ctx.save(); ctx.shadowColor = glow; ctx.shadowBlur = 9;
   if (o.type === "cone"){            // branching coral
-    P(x+5, y+4, 4, o.h-4, "#ff6a7a"); P(x, y+8, 4, 8, "#ff6a7a"); P(x, y+14, 7, 3, "#ff6a7a"); P(x+10, y, 4, 12, "#ff6a7a"); P(x+7, y+9, 5, 3, "#ff6a7a");
-    P(x+6, y+4, 1, o.h-6, "#ffb0b8"); P(x+11, y, 1, 10, "#ffb0b8"); P(x-1, y+o.h-3, o.w+2, 3, "#c84a5a");
+    const C = "#ff4a6a", H = "#ffd0d8", O = "#5a0a1a";
+    P(x+4, y+3, 6, o.h-3, O); P(x-1, y+7, 6, 10, O); P(x+9, y-1, 6, 14, O);
+    P(x+5, y+4, 4, o.h-4, C); P(x, y+8, 4, 8, C); P(x, y+14, 7, 3, C); P(x+10, y, 4, 12, C); P(x+7, y+9, 5, 3, C);
+    P(x+6, y+4, 1, o.h-6, H); P(x+11, y, 1, 10, H); P(x+1, y+8, 1, 6, H); P(x-1, y+o.h-3, o.w+2, 3, "#ff8a3d");
   } else if (o.type === "barrel"){   // sea anemone
-    P(x+1, y+o.h-10, o.w-2, 10, "#b8406a"); P(x, y+o.h-4, o.w, 4, "#8a2a4a");
-    for (let k = 0; k < 6; k++){ const tx = x + 1 + k*3; for (let seg = 0; seg < 5; seg++) P(tx + Math.round(Math.sin(game.t*3 + seg*.7 + k)*1.2), y + o.h - 12 - seg*3, 2, 3, seg > 3 ? "#ffd0e0" : "#ff7aa8"); }
+    P(x, y+o.h-11, o.w, 11, "#4a0a2a"); P(x+1, y+o.h-10, o.w-2, 10, "#ff3d8a"); P(x, y+o.h-4, o.w, 4, "#c81a6a"); P(x+2, y+o.h-9, o.w-4, 1, "#ff9ac8");
+    for (let k = 0; k < 6; k++){ const tx = x + 1 + k*3; for (let seg = 0; seg < 5; seg++) P(tx + Math.round(Math.sin(game.t*3 + seg*.7 + k)*1.2), y + o.h - 12 - seg*3, 2, 3, seg > 3 ? "#ffffff" : (seg > 1 ? "#ffb0e0" : "#ff6ab8")); }
   } else if (o.type === "tires"){    // stacked rocks
     for (let ry = y + o.h - 12, i = 0; ry >= y; ry -= 12, i++){ const w = o.w - (i%2)*4, rx = x + (i%2)*2;
-      P(rx+2, ry, w-4, 12, "#4a5a6a"); P(rx, ry+2, w, 8, "#4a5a6a"); P(rx+2, ry+1, w-6, 2, "#7a8a9a"); P(rx+w-5, ry+3, 3, 7, "#34404c"); }
-    P(x+2, y-1, 4, 2, "#3a8a5a");
+      P(rx+1, ry-1, w-2, 14, "#1a2230"); P(rx+2, ry, w-4, 12, "#9aaac0"); P(rx, ry+2, w, 8, "#9aaac0"); P(rx+2, ry+1, w-6, 2, "#e0eaf6"); P(rx+w-5, ry+3, 3, 7, "#6a7a90"); }
+    P(x+2, y-2, 6, 3, "#5fe03a"); P(x+12, y+o.h-14, 4, 2, "#5fe03a");
   } else if (o.type === "barrier"){  // giant clam
     const open = Math.sin(game.t*2) > .4 ? 2 : 0;
-    P(x+2, y+o.h-8, o.w-4, 8, "#7a6aa8"); P(x, y+o.h-5, o.w, 5, "#6a5a98");
-    P(x+2, y+4-open, o.w-4, 6, "#8a7ab8"); P(x+4, y+2-open, o.w-8, 2, "#8a7ab8");
-    for (let i = 0; i < o.w; i += 6) P(x+i+2, y+5-open, 2, 4, "#a89ad0");
-    P(x+o.w/2-2, y+10, 4, 4, "#fff6e0"); P(x+o.w/2-1, y+10, 1, 1, "#ffffff");
+    P(x-1, y+o.h-9, o.w+2, 10, "#2a1050"); P(x+2, y+o.h-8, o.w-4, 8, "#a070ff"); P(x, y+o.h-5, o.w, 5, "#8a5aea");
+    P(x+1, y+3-open, o.w-2, 8, "#2a1050"); P(x+2, y+4-open, o.w-4, 6, "#b88aff"); P(x+4, y+2-open, o.w-8, 2, "#b88aff");
+    for (let i = 0; i < o.w; i += 6) P(x+i+2, y+5-open, 2, 4, "#e0c8ff");
+    P(x+o.w/2-3, y+9, 6, 6, "#ffffff"); P(x+o.w/2-2, y+10, 2, 2, "#fff6e0");
   } else if (o.type === "tire"){     // rolling sea urchin
     const cx = x + o.w/2, cy = y + o.h/2;
-    ctx.save(); ctx.translate(cx, cy); ctx.rotate(-o.ph);
-    for (let a = 0; a < 8; a++){ ctx.save(); ctx.rotate(a*Math.PI/4); P(-1, -10, 2, 5, "#2a1a3a"); ctx.restore(); }
-    P(-6,-6,12,12,"#3a2a4a"); P(-7,-4,14,8,"#3a2a4a"); P(-4,-7,8,14,"#3a2a4a"); P(-3,-4,3,3,"#6a4a7a");
-    ctx.restore();
+    ctx.translate(cx, cy); ctx.rotate(-o.ph);
+    for (let a = 0; a < 8; a++){ ctx.save(); ctx.rotate(a*Math.PI/4); P(-1, -11, 2, 6, "#e090ff"); ctx.restore(); }
+    P(-7,-7,14,14,"#2a0a3a"); P(-6,-6,12,12,"#8a3ab8"); P(-7,-4,14,8,"#8a3ab8"); P(-4,-7,8,14,"#8a3ab8"); P(-3,-4,4,3,"#d8a0ff");
   } else if (o.type === "bar"){      // fishing net hanging on lines
-    for (let cy = 0; cy < y; cy += 6){ P(x+4, cy, 1, 4, "rgba(220,230,240,.6)"); P(x+o.w-5, cy, 1, 4, "rgba(220,230,240,.6)"); }
-    P(x, y, o.w, 2, "#c8b48a"); P(x, y+o.h-2, o.w, 2, "#c8b48a");
-    for (let i = 0; i <= o.w; i += 6){ P(x+i, y, 1, o.h, "#d8c8a0"); }
-    for (let j = 0; j < o.h; j += 4) P(x, y+j, o.w, 1, "rgba(216,200,160,.8)");
-    P(x+o.w/2-3, y+o.h, 6, 4, "#ff5a5a"); P(x+o.w/2-1, y+o.h+4, 2, 2, "#ffffff");
+    ctx.shadowBlur = 0;
+    for (let cy = 0; cy < y; cy += 6){ P(x+4, cy, 1, 4, "rgba(255,255,255,.7)"); P(x+o.w-5, cy, 1, 4, "rgba(255,255,255,.7)"); }
+    ctx.shadowBlur = 9;
+    P(x-1, y-1, o.w+2, o.h+2, "rgba(60,30,10,.5)");
+    P(x, y, o.w, 2, "#ffcf6a"); P(x, y+o.h-2, o.w, 2, "#ffcf6a");
+    for (let i = 0; i <= o.w; i += 6) P(x+i, y, 1, o.h, "#ffe6a0");
+    for (let j = 0; j < o.h; j += 4) P(x, y+j, o.w, 1, "#ffe6a0");
+    P(x+o.w/2-3, y+o.h, 6, 4, "#ff3a3a"); P(x+o.w/2-1, y+o.h+4, 2, 2, "#ffffff");
   }
+  ctx.restore();
+}
+/* the kraken takes over the screen: darkness and rumbling, a giant eye, tentacles, then the jaws snap shut */
+function drawKraken(mt){
+  const W = GW, H = GH, cx = W*.62, cy = GROUND*.45;
+  const P = (x,y,w,h,c) => { ctx.fillStyle = c; ctx.fillRect(Math.floor(x), Math.floor(y), w, h); };
+  ctx.fillStyle = `rgba(2,6,14,${Math.min(.75, mt*.6)})`; ctx.fillRect(0, 0, W, H);
+  // giant eye
+  if (mt > .5){
+    const open = Math.min(1, (mt - .5)/.7), ew = 70, eh = 30*open;
+    ctx.fillStyle = "#1a2a1a"; ctx.beginPath(); ctx.ellipse(cx, cy, ew + 10, eh + 10, 0, 0, Math.PI*2); ctx.fill();
+    ctx.save(); ctx.shadowColor = "#ffd34d"; ctx.shadowBlur = 20; ctx.fillStyle = "#f2c14e"; ctx.beginPath(); ctx.ellipse(cx, cy, ew, Math.max(1, eh), 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    ctx.fillStyle = "#e08a1a"; ctx.beginPath(); ctx.ellipse(cx, cy, ew*.55, Math.max(1, eh*.9), 0, 0, Math.PI*2); ctx.fill();
+    const look = Math.max(-18, -mt*12);
+    ctx.fillStyle = "#050505"; ctx.beginPath(); ctx.ellipse(cx + look, cy, 6, Math.max(1, eh*.85), 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.fillRect(cx + look + 10, cy - eh*.5, 5, 4);
+  }
+  // tentacles rising and sweeping toward the fish
+  if (mt > 1.1){
+    const k = Math.min(1, (mt - 1.1)/1.2);
+    [[W*.15, 1.0], [W*.45, .8], [W*.8, 1.2], [W*.98, .7]].forEach(([bx, sc], i) => {
+      const len = 26*k*sc + 4;
+      for (let seg = 0; seg < len; seg++){
+        const f = seg/len, x = bx + Math.sin(mt*3 + seg*.25 + i)*14*f - (bx - PX)*f*k*.55, y = H + 10 - seg*7*sc, r = 17*(1 - f*.65)*sc;
+        ctx.fillStyle = i % 2 ? "#3a5a3a" : "#4a3a5a"; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+        if (seg % 3 === 0){ ctx.fillStyle = "#c8a0b0"; ctx.beginPath(); ctx.arc(x + r*.5, y, r*.3, 0, Math.PI*2); ctx.fill(); }
+      }
+    });
+  }
+  // jaws snap shut over the whole screen
+  if (mt > 2.5){
+    const k = Math.min(1, (mt - 2.5)/.7), half = H/2*k;
+    ctx.fillStyle = "#1a0a0a"; ctx.fillRect(0, 0, W, half); ctx.fillRect(0, H - half, W, half);
+    ctx.fillStyle = "#3a0a10"; ctx.fillRect(0, half - 6, W, 6); ctx.fillRect(0, H - half, W, 6);
+    for (let x = 0; x < W; x += 22){ ctx.fillStyle = "#f4f0e6";
+      ctx.beginPath(); ctx.moveTo(x, half); ctx.lineTo(x + 22, half); ctx.lineTo(x + 11, half + 26); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x + 11, H - half); ctx.lineTo(x + 33, H - half); ctx.lineTo(x + 22, H - half - 26); ctx.fill(); }
+  }
+  if (mt > 3.2){ ctx.fillStyle = `rgba(0,0,0,${Math.min(1, (mt - 3.2)*3)})`; ctx.fillRect(0, 0, W, H); }
 }
 function drawCoin(k){
   const w = Math.max(1, Math.abs(Math.cos(k.spin))*k.r);
@@ -1686,6 +1786,7 @@ function text(str, x, y, size, col, align, kind){
 }
 function draw(){
   ctx.setTransform(SCALE,0,0,SCALE,0,0);
+  if (game.state === "monster"){ const q = Math.min(4, game.mt*1.6) * (game.mt > 3.1 ? 2 : 1); ctx.translate((Math.random() - .5)*q, (Math.random() - .5)*q); }
   drawBG();
   game.obs.forEach(drawObs);
   game.coins.forEach(drawCoin);
@@ -1723,9 +1824,11 @@ function draw(){
     text("Press Space or tap to swim", GW/2, 116+oy, 15, "#f3ead9", "center");
     text(GW < 600 ? "Grab coins · open chests at 100" : "Grab coins · clear rounds · open chests at 100", GW/2, 138+oy, 12, "#a9a8cf", "center");
   }
+  if (game.state === "monster") drawKraken(game.mt);
   if (game.state === "over"){
-    ctx.fillStyle = "rgba(10,10,30,.55)"; ctx.fillRect(0,0,GW,GH);
-    text("OUCH!", GW/2, 74+oy, 30, "#ffa25f", "center");
+    ctx.fillStyle = game.monsterEnd ? "rgba(2,4,10,.92)" : "rgba(10,10,30,.55)"; ctx.fillRect(0,0,GW,GH);
+    if (game.monsterEnd){ text("SWALLOWED BY", GW/2, 50+oy, 18, "#ff6a6a", "center"); text("THE KRAKEN!", GW/2, 78+oy, 26, "#ff4a4a", "center"); }
+    else text("OUCH!", GW/2, 74+oy, 30, "#ffa25f", "center");
     text(fmt(Math.floor(game.dist)) + "m", GW/2, 106+oy, 20, "#ffffff", "center", "num");
     text(`ROUND ${game.round}  ·  +${game.runCoins} COINS`, GW/2, 126+oy, 9, "#ffe08a", "center", "num");
     if (game.newBest) text("New best distance!", GW/2, 146+oy, 14, "#3fd0c9", "center");
